@@ -1,0 +1,93 @@
+require_relative('graph')
+require 'thread'
+
+MAXINT = (2**(0.size * 8 - 2) - 1)
+
+$scriptvars = {
+  views: Hash.new { | h, k | h[k] = {} },
+  registered_events: {},
+  registered_buttons: {},
+  main_queue: PriorityQueue.new,
+  move_queue: PriorityQueue.new,
+  graph: Graph.new,
+  popup: true
+}
+
+def move(start, finish)
+  path = $scriptvars[:graph].shortest_path(start, finish)
+  return unless path
+
+  priority = 1
+  path.each do | node, button |
+    #puts "...............Node: #{node}, button: #{button}"
+    $scriptvars[:move_queue].push([node, button], priority += 1)
+  end
+
+  puts "Moving from #{start} to #{finish}"
+
+  while value = $scriptvars[:move_queue].delete_min_return_key do
+    if value == 'frame_added'
+      puts 'Move_loop pressing native_back' if $scriptvars[:popup]
+      $scriptvars[:popup] = false
+      next
+    else
+      puts "On node: #{value[0]}, pressing button: #{value[1]}"
+      sleep 1
+      break if $scriptvars[:move_queue].empty?
+    end
+  end
+
+end
+
+def add_to_queue(event)
+  if event[:event] == 'frame_added'
+    $scriptvars[:move_queue].push('frame_added', 0)
+    $scriptvars[:main_queue].push([event[:event], event], 0)
+  else
+    $scriptvars[:main_queue].push([event[:event], event], 1)
+  end
+end
+
+# Pre-set views
+$scriptvars[:views] = {
+    main: { levelselect: [:playbutton, 1], settings: [:settingsbutton, 1] },
+    levelselect: { main: [:backbutton, 1], facebook: [:facebookbutton, 1] },
+    settings: { music: [:musicbutton, 1], sound: [:soundbutton, 1], credits: [:creditsbutton, 1]},
+    facebook: { levelselect: [:closebutton, 1]}
+}
+
+# Inject events to queue
+add_to_queue({event: :levelselect, params: 'herpderp'})
+$scriptvars[:registered_buttons][:playbutton] = {coord: 'coordinate_object', vertex: :levelselect}
+$scriptvars[:registered_buttons][:settingsbutton] = nil
+
+add_to_queue({ event: 'main' })
+add_to_queue({ event: 'frame_added' })
+
+
+
+
+
+
+while value = $scriptvars[:main_queue].delete_min_return_key do
+  case value[0]
+    when 'main'
+      $scriptvars[:registered_buttons].each do | button_name, button_vars |
+        next unless button_vars
+        $scriptvars[:views][value[0].to_sym][button_vars[:vertex]] = button_name.to_sym, 1
+      end
+      $scriptvars[:graph].create_matrix($scriptvars[:views])
+      move(:main, :levelselect)
+      move(:levelselect, :facebook)
+      move(:facebook, :credits)
+      move(:credits, :main)
+      move(:levelselect, :credits)
+
+    when 'frame_added'
+      puts 'Main_loop pressing native_back' if $scriptvars[:popup]
+      $scriptvars[:popup] = true
+
+    else
+      $scriptvars[:main_queue].empty? ? break : next
+  end
+end
